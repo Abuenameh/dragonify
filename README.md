@@ -1,5 +1,5 @@
 
-> Note
+> [!Note]
 > 
 > This is an updated README for [casse-boubou/dragonify](https://github.com/casse-boubou/dragonify), a fork of the original [tjhorner/dragonify](https://github.com/tjhorner/dragonify)
 
@@ -7,7 +7,7 @@ Dragonify is a utility for TrueNAS SCALE that enhances inter-app communication b
 
 It's a stop-gap until inter-app networking is properly implemented.
 
-> **Warning**
+> [!Warning]
 >
 > Dragonify introduces functionality that is unsupported by iXsystems. If you are having problems with your TrueNAS installation or its apps, please try stopping Dragonify and restarting all apps to see if the problem persists.
 
@@ -58,71 +58,4 @@ To connect an application container to one or more specific networks, you use a 
 
 For a more secure setup, it is highly recommended to use a socket proxy instead of giving Dragonify direct access to the Docker daemon. This approach limits Dragonify to only the permissions it absolutely needs, following the principle of least privilege.
 
-This example uses `swiftwave-org/docker-socket-proxy`, which offers granular read/write control for each Docker API endpoint.
-
-#### `docker-compose.yml`
-
-```yaml
-services:
-  # This container securely proxies the Docker socket
-  socket-proxy:
-    image: ghcr.io/swiftwave-org/docker-socket-proxy:latest
-    container_name: dragonify-socket-proxy
-    restart: always
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    # Granting the exact permissions Dragonify needs
-    environment:
-      ## Grant READ permissions for listing entities ##
-      - CONTAINERS_READ=1
-      - NETWORKS_READ=1
-      - EVENTS_READ=1
-      - NETWORKS_READ=1
-      - NETWORKS_WRITE=1
-
-  # The Dragonify container, now without direct socket access
-  dragonify:
-    image: ghcr.io/casse-boubou/dragonify:main
-    container_name: dragonify
-    restart: always
-    # Dragonify now depends on the proxy being available
-    depends_on:
-      - socket-proxy
-    # Configure Dragonify to use the proxy's HTTP endpoint
-    environment:
-      # DOCKER_HOST points to the proxy service
-      - DOCKER_HOST=tcp://socket-proxy:2375
-      # --- User-configurable options ---
-      - LOG_LEVEL=info
-      - CONNECT_ALL="false"
-      # Optionally pre-define custom networks
-      # - CUSTOMS_NETWORKS=media-net,utility-net
-```
-
-### Example Application Using the Proxy
-
-```yaml
-services:
-  # Your application container
-  my-app:
-    image: some-app-image:latest
-    # ... other container settings ...
-    labels:
-      # Tell Dragonify to connect this container to the 'media-net'
-      - "tj.horner.dragonify.networks=media-net"
-```
-
-## 2. Permissions Deep Dive and Justification
-
-A deeper analysis of the `index.ts` code confirms that the permissions requested in the secure `docker-compose.yml` example are accurate and provide the least privilege necessary.
-
-Here is a function-by-function breakdown of the Docker API calls and the corresponding permissions required:
-
-| Function                            | Required Permissions              |
-| ----------------------------------- | --------------------------------- |
-| setUpNetwork()                      | NETWORKS_READ=1, NETWORKS_WRITE=1 |
-| connectContainerToAppsNetwork()     | NETWORKS_READ=1, NETWORKS_WRITE=1 |
-| connectAllContainersToAppsNetwork() | CONTAINERS_READ=1                 |
-| connectNewContainerToAppsNetwork()  | CONTAINERS_READ=1                 |
-| removeEmptyCreatedNetwork()         | NETWORKS_READ=1, NETWORKS_WRITE=1 |
-| getEventStream()                    | EVENTS_READ=1                     |
+The example `docker-compose.yml` uses `wollomatic/socket-proxy`, which offers granular read/write control via regex path filtering.

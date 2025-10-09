@@ -1,6 +1,44 @@
 services:
   dragonify:
-    image: ghcr.io/tjhorner/dragonify:main
+    depends_on:
+      - socketproxy-dragonify
+    environment:
+      CONNECT_ALL: false
+      DOCKER_HOST: unix:///dragonify/docker.sock
+      LOG_LEVEL: info
+    image: ghcr.io/engturtle/dragonify:main
     restart: always
+    # dragonify needs to run as root for npm initalization
+    user: '0:<docker_gid>'
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker/dragonify:/dragonify:ro
+
+  socketproxy-dragonify:
+    command:
+      - '-loglevel=info'
+      - '-proxysocketendpoint=/dragonify/docker.sock'
+      # this regexp allows access only for requests that dragonify needs
+      - '-allowGET=/version|/_ping|/containers.*|/networks.*|/events'
+      - '-allowPOST=/version|/_ping|/network.*'
+      - '-allowDELETE=/networks/.+'
+      - '-allowHEAD=.*'
+      - '-shutdowngracetime=5'
+      - '-watchdoginterval=600'
+      - '-stoponwatchdog'
+    image: wollomatic/socket-proxy:1
+    mem_limit: 64M
+    network_mode: none
+    read_only: True
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges
+    user: '0:<docker_gid>'
+    cap_drop:
+      - ALL
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/run/docker/dragonify:/dragonify:rw
