@@ -1,42 +1,128 @@
-# Dragonify
 
-This is a small utility for TrueNAS SCALE 24.10 (Electric Eel) which configures the Docker networking for TrueNAS-managed apps to allow them to communicate with each other, as was in 24.04 (Dragonfish). It will also add a DNS alias in the format `{service}.ix-{app-name}.svc.cluster.local` for each service to ensure backward-compatibility with the old Kubernetes-based apps system.
+> Note
+> 
+> This is an updated README for [casse-boubou/dragonify](https://github.com/casse-boubou/dragonify), a fork of the original [tjhorner/dragonify](https://github.com/tjhorner/dragonify)
 
-It's a stop-gap until inter-app networking is [properly implemented in Fangtooth](https://forums.truenas.com/t/inter-app-communication-in-24-10-electric-eel/22054).
+Dragonify is a utility for TrueNAS SCALE that enhances inter-app communication by automatically managing Docker networks. It allows containers to communicate with each other via DNS, restoring and extending the networking functionality available in previous TrueNAS versions. This updated version provides granular control over network creation and container connections, improving both flexibility and security.
 
-> [!WARNING]  
+It's a stop-gap until inter-app networking is properly implemented.
+
+> **Warning**
+>
 > Dragonify introduces functionality that is unsupported by iXsystems. If you are having problems with your TrueNAS installation or its apps, please try stopping Dragonify and restarting all apps to see if the problem persists.
 
-## Installation
+### How It Works
 
-1. Go to "Apps" in the TrueNAS SCALE web UI.
-2. Click "Discover Apps".
-3. Click **⋮** in the top-right corner, then "Install via YAML".
-4. Set the name to `dragonify`, and paste the following YAML into the text box.
+Dragonify listens to Docker events to automatically manage networks and container connections:
+
+- **Automatic Network Management**: It can create, manage, and delete Docker bridge networks. Networks created by Dragonify are labeled for easy identification and can be automatically removed when they are no longer in use.
+- **DNS Aliasing**: When a container is connected to a network, Dragonify assigns it a DNS alias in the format `{service}.{project}.svc.cluster.local`, allowing other containers on the same network to resolve its address by name.
+- **Flexible Configuration**: You can use environment variables and container labels to customize how Dragonify behaves, from creating multiple isolated networks to controlling which containers get connected.
+
+### Configuration
+
+You can control Dragonify's behavior using a combination of environment variables and Docker labels on your application containers.
+
+#### Environment Variables
+
+These variables are set on the `dragonify` container itself.
+
+- `LOG_LEVEL`
+    - **Description**: Sets the verbosity of the application's logs.
+    - **Values**: `info` (default), `debug`.
+    - **Example**: `LOG_LEVEL: debug`
+- `CONNECT_ALL`
+    - **Description**: Controls whether all TrueNAS-managed `ix-` apps should be automatically connected to the default `apps-internal` network. By default, this is enabled to maintain backward compatibility.
+    - **Values**: `true` (default), `false`.
+    - **Example**: `CONNECT_ALL: "false"`
+- `CUSTOMS_NETWORKS`
+    - **Description**: A comma-separated list of Docker networks that Dragonify should create on startup. This is useful for pre-defining networks you plan to use across multiple applications.
+    - **Values**: A string of network names, e.g., `media-net,home-automation-net`.
+    - **Example**: `CUSTOMS_NETWORKS: apps-internal-custom,app-external`
+
+#### Container Label
+
+To connect an application container to one or more specific networks, you use a Docker label.
+
+- `tj.horner.dragonify.networks`
+    - **Description**: A comma-separated list of networks to which the container should be connected. If a specified network does not exist, Dragonify will create it automatically.
+    - **Applies to**: Any application container you want Dragonify to manage.
+    - **Example**:
+
+```yaml
+  labels:
+    - "tj.horner.dragonify.networks=media-net,downloads"
+```
+
+### Secure Installation with Docker Socket Proxy
+
+For a more secure setup, it is highly recommended to use a socket proxy instead of giving Dragonify direct access to the Docker daemon. This approach limits Dragonify to only the permissions it absolutely needs, following the principle of least privilege.
+
+This example uses `swiftwave-org/docker-socket-proxy`, which offers granular read/write control for each Docker API endpoint.
+
+#### `docker-compose.yml`
 
 ```yaml
 services:
-  dragonify:
-    image: ghcr.io/tjhorner/dragonify:main
+  # This container securely proxies the Docker socket
+  socket-proxy:
+    image: ghcr.io/swiftwave-org/docker-socket-proxy:latest
+    container_name: dragonify-socket-proxy
     restart: always
-    environment:
-      LOG_LEVEL: info # change to debug for more verbose logging
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    # Granting the exact permissions Dragonify needs
+    environment:
+      ## Grant READ permissions for listing entities ##
+      - CONTAINERS_READ=1
+      - NETWORKS_READ=1
+      - EVENTS_READ=1
+      - NETWORKS_READ=1
+      - NETWORKS_WRITE=1
+
+  # The Dragonify container, now without direct socket access
+  dragonify:
+    image: ghcr.io/casse-boubou/dragonify:main
+    container_name: dragonify
+    restart: always
+    # Dragonify now depends on the proxy being available
+    depends_on:
+      - socket-proxy
+    # Configure Dragonify to use the proxy's HTTP endpoint
+    environment:
+      # DOCKER_HOST points to the proxy service
+      - DOCKER_HOST=tcp://socket-proxy:2375
+      # --- User-configurable options ---
+      - LOG_LEVEL=info
+      - CONNECT_ALL="false"
+      # Optionally pre-define custom networks
+      # - CUSTOMS_NETWORKS=media-net,utility-net
 ```
 
-Once started, all of your apps will now be connected on the same Docker network with DNS aliases for each service.
+### Example Application Using the Proxy
 
-## Technical Details
-
-To facilitate inter-app communication, Dragonify creates a new Docker bridge network called `apps-internal`. It connects all existing TrueNAS-managed containers to the network, then starts listening for new containers to be started. When a new container is started, Dragonify will automatically connect it to the `apps-internal` network.
-
-It is essentially running this command automatically for you (using postgres as an example):
-
-```sh
-docker network connect apps-internal --alias postgres.ix-postgres.svc.cluster.local ix-postgres-postgres-1
+```yaml
+services:
+  # Your application container
+  my-app:
+    image: some-app-image:latest
+    # ... other container settings ...
+    labels:
+      # Tell Dragonify to connect this container to the 'media-net'
+      - "tj.horner.dragonify.networks=media-net"
 ```
 
-## License
+## 2. Permissions Deep Dive and Justification
 
-MIT
+A deeper analysis of the `index.ts` code confirms that the permissions requested in the secure `docker-compose.yml` example are accurate and provide the least privilege necessary.
+
+Here is a function-by-function breakdown of the Docker API calls and the corresponding permissions required:
+
+| Function                            | Required Permissions              |
+| ----------------------------------- | --------------------------------- |
+| setUpNetwork()                      | NETWORKS_READ=1, NETWORKS_WRITE=1 |
+| connectContainerToAppsNetwork()     | NETWORKS_READ=1, NETWORKS_WRITE=1 |
+| connectAllContainersToAppsNetwork() | CONTAINERS_READ=1                 |
+| connectNewContainerToAppsNetwork()  | CONTAINERS_READ=1                 |
+| removeEmptyCreatedNetwork()         | NETWORKS_READ=1, NETWORKS_WRITE=1 |
+| getEventStream()                    | EVENTS_READ=1                     |
