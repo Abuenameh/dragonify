@@ -6,7 +6,7 @@ services:
       CONNECT_ALL: false
       DOCKER_HOST: unix:///dragonify/docker.sock
       LOG_LEVEL: info
-    image: ghcr.io/engturtle/dragonify:main
+    image: ghcr.io/tjhorner/dragonify:main
     restart: always
     # dragonify needs to run as root for npm initalization
     user: '0:<docker_gid>'
