@@ -76,6 +76,11 @@ async function setUpNetwork(docker: Docker) {
   }
 }
 
+function getContainerName(container: Docker.ContainerInfo) {
+  const service = container.Labels["com.docker.compose.service"]
+  return `${service}`
+}
+
 function getDnsName(container: Docker.ContainerInfo) {
   const service = container.Labels["com.docker.compose.service"]
   const project = container.Labels["com.docker.compose.project"]
@@ -114,6 +119,7 @@ async function connectContainerToAppsNetwork(docker: Docker, container: Docker.C
   }
 
   const network = docker.getNetwork(network_name)
+  const containerName = getContainerName(container)
   const dnsName = getDnsName(container)
 
   logger.debug(`Connecting container ${container.Id} to network "${network_name}" as ${dnsName}`)
@@ -122,7 +128,7 @@ async function connectContainerToAppsNetwork(docker: Docker, container: Docker.C
     await network.connect({
       Container: container.Id,
       EndpointConfig: {
-        Aliases: [ dnsName ]
+        Aliases: [ containerName, dnsName ]
       }
     })
   } catch (e: any) {
