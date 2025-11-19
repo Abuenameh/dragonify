@@ -257,20 +257,10 @@ async function main() {
 
   const events = getEventStream(docker)
   events.on("container.start", (event) => {
-    const containerAttributes = event.Actor.Attributes
-    if (!isIxProjectName(containerAttributes["com.docker.compose.project"])) {
-      return
-    }
-
     connectNewContainerToAppsNetwork(docker, event.Actor["ID"])
   })
 
   events.on("container.stop", (event) => {
-    const containerAttributes = event.Actor.Attributes
-    if (!isIxProjectName(containerAttributes["com.docker.compose.project"])) {
-      return
-    }
-
     removeEmptyCreatedNetwork(docker)
   })
 }
